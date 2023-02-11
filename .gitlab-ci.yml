@@ -1,0 +1,370 @@
+stages:
+  - build
+  - test
+  - create_tag
+  - clean_up
+  - deploy
+build_stage:
+  artifacts:
+    reports:
+      dotenv: refname.env
+    paths:
+      - build.env # переменная которую мы будет протаскивать в другие stages
+  stage: build
+  tags:
+    - pmc   # имя runner
+  rules:
+    - if: '$CI_COMMIT_REF_NAME =~ /^feature*/ && $CI_PIPELINE_SOURCE != "merge_request_event"'
+      when: manual
+      variables:
+        role: awx_ssh_unprotected   # роль vault для незащищенных веток
+    - if: '$CI_COMMIT_REF_NAME == "develop" && $CI_PIPELINE_SOURCE != "merge_request_event"'
+      when: on_success
+      variables:
+        role: awx_ssh_protected
+    - if: '$CI_COMMIT_REF_NAME == "preprod" && $CI_PIPELINE_SOURCE != "merge_request_event"'
+      when: manual
+      variables:
+        role: awx_ssh_protected     # роль vault для защищенных веток
+    - if: '$CI_COMMIT_REF_NAME == "master" && $CI_PIPELINE_SOURCE != "merge_request_event"'
+      when: manual
+      variables:
+        role: awx_ssh_protected
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: on_success
+      variables:
+        role: awx_ssh_merge
+
+  before_script:
+    - 'echo "$local_user" && echo $local_repo'
+    - 'echo $local_pass | docker login $local_repo --username "$local_user" --password-stdin'
+    #- docker login -u $local_user -p $local_pass $local_repo
+  script:
+    - echo $role > build.env
+    - echo $role
+    - export VAULT_ADDR=http://127.0.0.1:8200
+    - export VAULT_TOKEN="$(vault write -field=token auth/jwt/login role=$role jwt=$CI_JOB_JWT)" # экcпорт токена для доступа gitlab к vault
+    - echo $CI_JOB_JWT > /tmp/jwt.log
+    - export ssh_prv_key="$(vault kv get -field=ssh awx_ssh/projects/develop/ssh_key)" # awx ssh key
+    - echo $role
+    - CI_COMMIT_REF_NAME="$(tr [A-Z] [a-z] <<< "$CI_COMMIT_REF_NAME")"
+    - echo "refname=$local_repo/mcomm/$CI_PROJECT_NAME/php/$CI_COMMIT_REF_NAME:$CI_PIPELINE_IID" > refname.env
+    - docker build --network=host --build-arg ssh_prv_key=$ssh_prv_key -t $local_repo/mcomm/$CI_PROJECT_NAME/php/$CI_COMMIT_REF_NAME:$CI_PIPELINE_IID -f ./docker/php/Dockerfile .
+    - docker push $local_repo/mcomm/$CI_PROJECT_NAME/php/$CI_COMMIT_REF_NAME:$CI_PIPELINE_IID
+    - echo $CI_COMMIT_REF_NAME:$CI_PIPELINE_IID
+
+test_job:
+  tags:
+    - pmc-docker-2
+  variables:
+    GIT_STRATEGY: none
+  needs:
+    - job: build_stage
+      artifacts: true
+    #   artifacts: true
+  image: $refname
+  stage: test
+  script:
+    - echo "$local_repo/mcomm/$CI_PROJECT_NAME/php/$CI_COMMIT_REF_NAME:$CI_PIPELINE_IID"
+    - cd /app && /app/vendor/bin/phpunit --debug --colors=never --log-junit $CI_PROJECT_DIR/phpunit-report.xml tests
+    - echo $CI_PROJECT_DIR
+  allow_failure: true
+  artifacts:
+    when: always
+    paths:
+      - phpunit-report.xml
+    expire_in: 1 week
+    reports:
+      junit:
+        - phpunit-report.xml
+
+tag_job:
+  needs:
+    - job: build_stage
+      artifacts: true
+
+  tags:
+    - pmc
+  rules:
+    - if: '$CI_COMMIT_REF_NAME =~ /^feature*/ && $role != "awx_ssh_merge"'
+      when: on_success
+      variables:
+        role: awx_ssh_unprotected
+
+    - if: '$CI_COMMIT_REF_NAME == "develop" && $role != "awx_ssh_merge"'
+      when: on_success
+      variables:
+        role: awx_ssh_protected
+
+    - if: '$CI_COMMIT_REF_NAME == "preprod" && $role != "awx_ssh_merge"'
+      when: on_success
+      variables:
+        role: awx_ssh_protected
+
+    - if: '$CI_COMMIT_REF_NAME == "master" && $role != "awx_ssh_merge"'
+      when: on_success
+      variables:
+        role: awx_ssh_protected
+
+    - if: '$role == "awx_ssh_merge"'
+      when: on_success
+      variables:
+        role: awx_ssh_merge
+
+  stage: create_tag
+  script:
+    - echo $role
+    - a=`cat build.env`
+    - if [ "$a" == "awx_ssh_merge" ]; then export role=awx_ssh_merge; fi
+    - echo $role
+    - export VAULT_ADDR=http://127.0.0.1:8200
+    - export VAULT_TOKEN="$(vault write -field=token auth/jwt/login role=$role jwt=$CI_JOB_JWT)"
+    - echo $role
+    - export ssh_prv_key="$(vault kv get -field=ssh awx_ssh/projects/develop/ssh_key)"
+    - export git_user="$(vault kv get -field=git_user awx_ssh/projects/develop/git)"
+    - export git_pass="$(vault kv get -field=git_pass awx_ssh/projects/develop/git)"
+    - rm -rf /tmp/$infra_dir
+    #    - echo ${ssh_prv_key} | base64 -di > $(pwd)/pmc.key
+    #    - chmod 600 $(pwd)/pmc.key
+    #
+    #    - echo $'Host 192.168.66.115 \n
+    #      UserKnownHostsFile /dev/null \n
+    #      StrictHostKeyChecking no \n
+    #      Port 2222 \n
+    #      User awx' > /tmp/config.cnf
+    #    - eval $(ssh-agent -s)
+    #    - ssh-add -t180 $(pwd)/pmc.key
+    #    - ssh-add -l
+    #
+    #    - rm -f $(pwd)/pmc.key
+    - git clone https://$git_user:$git_pass@$gitlab_host/$gitlab_group/$infra_project.git
+    - ls -lha
+    - cd $infra_dir/helm3
+
+    - set -e
+    - EXIT_CODE=0
+    - git checkout $CI_COMMIT_REF_NAME || EXIT_CODE=$?
+    - if [ $EXIT_CODE != 0 ];then git checkout develop && git checkout -b $CI_COMMIT_REF_NAME  > /dev/null 2>&1;fi
+    - cat ./bamboo-ci.sh
+    - chmod +x ./bamboo-ci.sh
+    - if [ "$CI_COMMIT_REF_NAME" == "master" ] || [ "$CI_COMMIT_REF_NAME" == "preprod" ]; then sreda="$CI_COMMIT_REF_NAME"; else sreda="develop";fi
+    - ./bamboo-ci.sh awx $CI_PROJECT_NAME $CI_COMMIT_REF_NAME $CI_PIPELINE_IID $artefactory $kubesecret $sreda
+    - git tag -d $CI_COMMIT_REF_NAME-$CI_PIPELINE_IID || true # удаляем локальный тег если он существует, реализованно для retry pipeline
+    - git tag $CI_COMMIT_REF_NAME-$CI_PIPELINE_IID
+    - git push --delete origin $CI_COMMIT_REF_NAME-$CI_PIPELINE_IID || true # удаляем удаленный тег если он существует, реализованно для retry pipeline
+    - git push origin --tags # пуш тега в репозиторий
+
+clean_up_job:
+  needs:
+    - job: build_stage
+      artifacts: true
+
+  tags:
+    - pmc
+  stage: clean_up
+  script:
+    - cat build.env
+    - rm -f build.env
+    - cat build.env || true
+  when: always
+
+deploy_job_dev:
+
+  tags:
+    - pmc
+  stage: deploy
+  variables:
+    HOST_DEPLOY: "192.168.66.51"
+    sreda: "develop"
+  rules:
+    - if: '$CI_COMMIT_REF_NAME =~ /^feature*/'
+      when: manual
+      variables:
+        role: awx_ssh_unprotected
+        sreda: "develop"
+    - if: '$CI_COMMIT_REF_NAME == "develop"'
+      when: manual
+      variables:
+        role: awx_ssh_protected
+        sreda: "develop"
+    - if: '$CI_COMMIT_REF_NAME == "preprod"'
+      when: manual
+      variables:
+        role: awx_ssh_protected
+        sreda: "preprod"
+    - if: '$CI_COMMIT_REF_NAME == "master"'
+      when: manual
+      variables:
+        role: awx_ssh_protected
+        sreda: "master"
+
+  script:
+    - export VAULT_ADDR=http://127.0.0.1:8200
+    - export VAULT_TOKEN="$(vault write -field=token auth/jwt/login role=$role jwt=$CI_JOB_JWT)"
+    - echo $role
+    - export ssh_prv_key="$(vault kv get -field=ssh awx_ssh/projects/develop/ssh_key)"
+    - export git_user="$(vault kv get -field=git_user awx_ssh/projects/develop/git)"
+    - export git_pass="$(vault kv get -field=git_pass awx_ssh/projects/develop/git)"
+    - rm -rf /tmp/$infra_dir
+    - echo $HOST_DEPLOY
+    - echo ${ssh_prv_key} | base64 -di > $(pwd)/awx_pmc.key
+    - chmod 600 $(pwd)/awx_pmc.key
+    - eval $(ssh-agent -s)
+    - ssh-add -t180 $(pwd)/awx_pmc.key
+    - rm -f $(pwd)/awx_pmc.key
+    - ssh -o "StrictHostKeyChecking no" -A awx@$HOST_DEPLOY << ENDSSH
+    - env
+    - cd /home/awx/
+    - rm -rf $infra_dir/
+    #    - echo $'Host 192.168.66.115 \n
+    #      UserKnownHostsFile /dev/null \n
+    #      StrictHostKeyChecking no \n
+    #      Port 2222 \n
+    #      User awx' > /tmp/config.cnf
+    - git clone https://$git_user:$git_pass@$gitlab_host/$gitlab_group/$infra_project.git
+    - cd $infra_dir/
+    - git fetch && git fetch --tags
+    - echo ${CI_COMMIT_REF_NAME}-${CI_PIPELINE_IID}
+    - git checkout ${CI_COMMIT_REF_NAME}-${CI_PIPELINE_IID}
+    - cd helm3
+    - echo $CI_PROJECT_NAME > ./deploy.list
+    - cat ./deploy.list
+    - if [ "$CI_COMMIT_REF_NAME" == "master" ] || [ "$CI_COMMIT_REF_NAME" == "preprod" ]; then sreda="$CI_COMMIT_REF_NAME"; else sreda="develop";fi
+    - chmod +x ./bamboo-cd.sh && ./bamboo-cd.sh pmc-production $domain_dev 1 $CI_COMMIT_REF_NAME $sreda
+    - ENDSSH
+
+deploy_job_preprod:
+
+  tags:
+    - pmc
+  stage: deploy
+  variables:
+    HOST_DEPLOY: "192.168.66.85"
+    sreda: "develop"
+  rules:
+    - if: '$CI_COMMIT_REF_NAME =~ /^feature*/'
+      when: manual
+      variables:
+        role: awx_ssh_unprotected
+        sreda: "develop"
+        domain_dev: "dev.pmc.vas-stream.ru"
+        domain_prep: "preprod.pmc.vas-stream.ru"
+        domain_prod: "pmc.vas-stream.ru"
+    - if: '$CI_COMMIT_REF_NAME == "develop"'
+      when: manual
+      variables:
+        role: awx_ssh_protected
+        sreda: "develop"
+        domain: "dev.pmc.vas-stream.ru"
+    - if: '$CI_COMMIT_REF_NAME == "preprod"'
+      when: manual
+      variables:
+        role: awx_ssh_protected
+        sreda: "preprod"
+        domain: "preprod.pmc.vas-stream.ru"
+    - if: '$CI_COMMIT_REF_NAME == "master"'
+      when: manual
+      variables:
+        role: awx_ssh_protected
+        sreda: "master"
+        domain: "pmc.vas-stream.ru"
+
+  script:
+    - export VAULT_ADDR=http://127.0.0.1:8200
+    - export VAULT_TOKEN="$(vault write -field=token auth/jwt/login role=$role jwt=$CI_JOB_JWT)"
+    - echo $role
+    - export ssh_prv_key="$(vault kv get -field=ssh awx_ssh/projects/develop/ssh_key)"
+    - export git_user="$(vault kv get -field=git_user awx_ssh/projects/develop/git)"
+    - export git_pass="$(vault kv get -field=git_pass awx_ssh/projects/develop/git)"
+    - rm -rf /tmp/$infra_dir
+    - echo $HOST_DEPLOY
+    - echo ${ssh_prv_key} | base64 -di > $(pwd)/awx_pmc.key
+    - chmod 600 $(pwd)/awx_pmc.key
+    - eval $(ssh-agent -s)
+    - ssh-add -t180 $(pwd)/awx_pmc.key
+    - rm -f $(pwd)/awx_pmc.key
+    - ssh -o "StrictHostKeyChecking no" -A awx@$HOST_DEPLOY << ENDSSH
+    - env
+    - cd /home/awx/
+    - rm -rf $infra_dir/
+    #    - echo $'Host 192.168.66.115 \n
+    #      UserKnownHostsFile /dev/null \n
+    #      StrictHostKeyChecking no \n
+    #      Port 2222 \n
+    #      User awx' > /tmp/config.cnf
+    - git clone https://$git_user:$git_pass@$gitlab_host/$gitlab_group/$infra_project.git
+    - cd $infra_dir/
+    - git fetch && git fetch --tags
+    - echo ${CI_COMMIT_REF_NAME}-${CI_PIPELINE_IID}
+    - git checkout ${CI_COMMIT_REF_NAME}-${CI_PIPELINE_IID}
+    - cd helm3
+    - echo $CI_PROJECT_NAME > ./deploy.list
+    - cat ./deploy.list
+    - if [ "$CI_COMMIT_REF_NAME" == "master" ] || [ "$CI_COMMIT_REF_NAME" == "preprod" ]; then sreda="$CI_COMMIT_REF_NAME"; else sreda="develop";fi
+    - chmod +x ./bamboo-cd.sh && ./bamboo-cd.sh pmc-production $domain_prep 1 $CI_COMMIT_REF_NAME $sreda
+    - ENDSSH
+
+deploy_job_prod:
+
+  tags:
+    - pmc-prod
+  stage: deploy
+  variables:
+    HOST_DEPLOY: "10.10.119.41"
+    sreda: "develop"
+  rules:
+    - if: '$CI_COMMIT_REF_NAME =~ /^feature*/'
+      when: manual
+      variables:
+        role: awx_ssh_unprotected
+        sreda: "develop"
+    - if: '$CI_COMMIT_REF_NAME == "develop"'
+      when: manual
+      variables:
+        role: awx_ssh_protected
+        sreda: "develop"
+    - if: '$CI_COMMIT_REF_NAME == "preprod"'
+      when: manual
+      variables:
+        role: awx_ssh_protected
+        sreda: "preprod"
+    - if: '$CI_COMMIT_REF_NAME == "master"'
+      when: manual
+      variables:
+        role: awx_ssh_protected
+        sreda: "master"
+
+  script:
+    - export VAULT_ADDR=http://10.10.119.80:8200
+    - export VAULT_TOKEN="$(vault write -field=token auth/jwt/login role=$role jwt=$CI_JOB_JWT)"
+    - echo $role
+    - export ssh_prv_key="$(vault kv get -field=ssh awx_ssh/projects/develop/ssh_key)"
+    - export git_user="$(vault kv get -field=git_user awx_ssh/projects/develop/git)"
+    - export git_pass="$(vault kv get -field=git_pass awx_ssh/projects/develop/git)"
+    - rm -rf /tmp/$infra_dir
+    - echo $HOST_DEPLOY
+    - echo ${ssh_prv_key} | base64 -di > $(pwd)/awx_pmc.key
+    - chmod 600 $(pwd)/awx_pmc.key
+    - eval $(ssh-agent -s)
+    - ssh-add -t180 $(pwd)/awx_pmc.key
+    - rm -f $(pwd)/awx_pmc.key
+    - ssh -o "StrictHostKeyChecking no" -A awx@$HOST_DEPLOY << ENDSSH
+    - env
+    - cd /home/awx/
+    - rm -rf $infra_dir/
+    #    - echo $'Host 192.168.66.115 \n
+    #      UserKnownHostsFile /dev/null \n
+    #      StrictHostKeyChecking no \n
+    #      Port 2222 \n
+    #      User awx' > /tmp/config.cnf
+    - git clone https://$git_user:$git_pass@$gitlab_host/$gitlab_group/$infra_project.git
+    - cd $infra_dir/
+    - git fetch && git fetch --tags
+    - echo ${CI_COMMIT_REF_NAME}-${CI_PIPELINE_IID}
+    - git checkout ${CI_COMMIT_REF_NAME}-${CI_PIPELINE_IID}
+    - cd helm3
+    - echo $CI_PROJECT_NAME > ./deploy.list
+    - cat ./deploy.list
+    - if [ "$CI_COMMIT_REF_NAME" == "master" ] || [ "$CI_COMMIT_REF_NAME" == "preprod" ]; then sreda="$CI_COMMIT_REF_NAME"; else sreda="develop";fi
+    - chmod +x ./bamboo-cd.sh && ./bamboo-cd.sh pmc-production $domain_prod 3 $CI_COMMIT_REF_NAME $sreda
+    - ENDSSH
