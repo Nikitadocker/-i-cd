@@ -14,8 +14,8 @@ build_stage:
   tags:
     - pmc   # имя runner
   rules:
-    - if: '$CI_COMMIT_REF_NAME =~ /^feature*/ && $CI_PIPELINE_SOURCE != "merge_request_event"'
-      when: manual
+    - if: '$CI_COMMIT_REF_NAME =~ /^feature*/ && $CI_PIPELINE_SOURCE != "merge_request_event"'  # если  мы коммитим в ветку,которая содержит название feature и этот коммит не явлеться merge request
+      when: manual # условия include job в pipeline
       variables:
         role: awx_ssh_unprotected   # роль vault для незащищенных веток
     - if: '$CI_COMMIT_REF_NAME == "develop" && $CI_PIPELINE_SOURCE != "merge_request_event"'
@@ -25,7 +25,7 @@ build_stage:
     - if: '$CI_COMMIT_REF_NAME == "preprod" && $CI_PIPELINE_SOURCE != "merge_request_event"'
       when: manual
       variables:
-        role: awx_ssh_protected     # роль vault для защищенных веток
+        role: awx_ssh_protected     # роль vault для защищенных веток ( в щащищенных ветках контролируеться кто может мерджить,кто может делать  force push)
     - if: '$CI_COMMIT_REF_NAME == "master" && $CI_PIPELINE_SOURCE != "merge_request_event"'
       when: manual
       variables:
@@ -33,7 +33,7 @@ build_stage:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       when: on_success
       variables:
-        role: awx_ssh_merge
+        role: awx_ssh_merge # роль vault для merge
 
   before_script:
     - 'echo "$local_user" && echo $local_repo'
@@ -55,7 +55,7 @@ build_stage:
 
 test_job:
   tags:
-    - pmc-docker-2
+    - pmc-docker-2 #имя runner
   variables:
     GIT_STRATEGY: none
   needs:
@@ -117,13 +117,13 @@ tag_job:
     - a=`cat build.env`
     - if [ "$a" == "awx_ssh_merge" ]; then export role=awx_ssh_merge; fi
     - echo $role
-    - export VAULT_ADDR=http://127.0.0.1:8200
-    - export VAULT_TOKEN="$(vault write -field=token auth/jwt/login role=$role jwt=$CI_JOB_JWT)"
+    - export VAULT_ADDR=http://127.0.0.1:8200 # обращаемся к vault 
+    - export VAULT_TOKEN="$(vault write -field=token auth/jwt/login role=$role jwt=$CI_JOB_JWT)"  # экcпорт токена для доступа gitlab к vault
     - echo $role
-    - export ssh_prv_key="$(vault kv get -field=ssh awx_ssh/projects/develop/ssh_key)"
+    - export ssh_prv_key="$(vault kv get -field=ssh awx_ssh/projects/develop/ssh_key)" # экспорт приватной части  пользователся ssh
     - export git_user="$(vault kv get -field=git_user awx_ssh/projects/develop/git)"
     - export git_pass="$(vault kv get -field=git_pass awx_ssh/projects/develop/git)"
-    - rm -rf /tmp/$infra_dir
+    - rm -rf /tmp/$infra_dir  # удаляем ранее скопированную директорию helm templates которая содержит helm chart
     #    - echo ${ssh_prv_key} | base64 -di > $(pwd)/pmc.key
     #    - chmod 600 $(pwd)/pmc.key
     #
