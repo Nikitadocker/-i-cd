@@ -137,7 +137,7 @@ tag_job:
     #    - ssh-add -l
     #
     #    - rm -f $(pwd)/pmc.key
-    - git clone https://$git_user:$git_pass@$gitlab_host/$gitlab_group/$infra_project.git
+    - git clone https://$git_user:$git_pass@$gitlab_host/$gitlab_group/$infra_project.git # клонируем проект с helm chart
     - ls -lha
     - cd $infra_dir/helm3
 

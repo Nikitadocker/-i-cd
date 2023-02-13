@@ -7,8 +7,8 @@
 #$5 artefactory
 #$6 secret
 #7 sreda okryzheniya
-git config user.email "$1@stream.ru"
-git config user.name "$1"
+git config user.email "$1@stream.ru" # конфигурация почты пользователя для git
+git config user.name "$1" # конфигурация  пользователя для git
 
 
 git checkout $3
