@@ -37,7 +37,7 @@ build_stage:
 
   before_script:
     - 'echo "$local_user" && echo $local_repo'
-    - 'echo $local_pass | docker login $local_repo --username "$local_user" --password-stdin'
+    - 'echo $local_pass | docker login $local_repo --username "$local_user" --password-stdin' # делаем аунтефикацию в хранилище харбор
     #- docker login -u $local_user -p $local_pass $local_repo
   script:
     - echo $role > build.env
@@ -121,7 +121,7 @@ tag_job:
     - export VAULT_TOKEN="$(vault write -field=token auth/jwt/login role=$role jwt=$CI_JOB_JWT)"  # экcпорт токена для доступа gitlab к vault
     - echo $role
     - export ssh_prv_key="$(vault kv get -field=ssh awx_ssh/projects/develop/ssh_key)" # экспорт приватной части  пользователся ssh
-    - export git_user="$(vault kv get -field=git_user awx_ssh/projects/develop/git)"
+    - export git_user="$(vault kv get -field=git_user awx_ssh/projects/develop/git)" # экспорт пользователя git под которым клонируем репозиторий
     - export git_pass="$(vault kv get -field=git_pass awx_ssh/projects/develop/git)"
     - rm -rf /tmp/$infra_dir  # удаляем ранее скопированную директорию helm templates которая содержит helm chart
     #    - echo ${ssh_prv_key} | base64 -di > $(pwd)/pmc.key
@@ -146,7 +146,7 @@ tag_job:
     - git checkout $CI_COMMIT_REF_NAME || EXIT_CODE=$?
     - if [ $EXIT_CODE != 0 ];then git checkout develop && git checkout -b $CI_COMMIT_REF_NAME  > /dev/null 2>&1;fi
     - cat ./bamboo-ci.sh
-    - chmod +x ./bamboo-ci.sh
+    - chmod +x ./bamboo-ci.sh # запускаем выполнение bash сi cкрипта
     - if [ "$CI_COMMIT_REF_NAME" == "master" ] || [ "$CI_COMMIT_REF_NAME" == "preprod" ]; then sreda="$CI_COMMIT_REF_NAME"; else sreda="develop";fi
     - ./bamboo-ci.sh awx $CI_PROJECT_NAME $CI_COMMIT_REF_NAME $CI_PIPELINE_IID $artefactory $kubesecret $sreda
     - git tag -d $CI_COMMIT_REF_NAME-$CI_PIPELINE_IID || true # удаляем локальный тег если он существует, реализованно для retry pipeline
