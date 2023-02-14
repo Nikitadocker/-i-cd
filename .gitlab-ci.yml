@@ -146,7 +146,7 @@ tag_job:
     - git checkout $CI_COMMIT_REF_NAME || EXIT_CODE=$? # переключаемся на ветку билда и проверяем значение кода
     - if [ $EXIT_CODE != 0 ];then git checkout develop && git checkout -b $CI_COMMIT_REF_NAME  > /dev/null 2>&1;fi # если cтатус exit code  не равен 0,тогда создаем из develop ветку билда
     - cat ./bamboo-ci.sh
-    - chmod +x ./bamboo-ci.sh # запускаем выполнение bash сi cкрипта
+    - chmod +x ./bamboo-ci.sh # даем права на выполнение bash сi cкрипта
     - if [ "$CI_COMMIT_REF_NAME" == "master" ] || [ "$CI_COMMIT_REF_NAME" == "preprod" ]; then sreda="$CI_COMMIT_REF_NAME"; else sreda="develop";fi
     - ./bamboo-ci.sh awx $CI_PROJECT_NAME $CI_COMMIT_REF_NAME $CI_PIPELINE_IID $artefactory $kubesecret $sreda
     - git tag -d $CI_COMMIT_REF_NAME-$CI_PIPELINE_IID || true # удаляем локальный тег если он существует, реализованно для retry pipeline

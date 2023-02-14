@@ -20,8 +20,8 @@ echo +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 branch=`git branch` # cоздаем переменную в которой будет текущая ветка
 echo "current branch: "${branch} 
-branch_low="$(tr [A-Z] [a-z] <<< "$3")"
-sed -i "/arti/c arti: $5" $2/$7/values.yaml
+branch_low="$(tr [A-Z] [a-z] <<< "$3")" # переписываем регистр в названии ветки.
+sed -i "/arti/c arti: $5" $2/$7/values.yaml # переписываем значение строки хранилища  в текущем проекте, в текущей папке среды(develop,preprod)
 sed -i "/b_$2/c b_$2: $branch_low" $2/$7/values.yaml
 sed -i "/t_$2/c t_$2: $4" $2/$7/values.yaml
 sed -i "/appVersion/c appVersion: $3-$4" $2/$7/Chart.yaml
