@@ -122,7 +122,7 @@ tag_job:
     - echo $role
     - export ssh_prv_key="$(vault kv get -field=ssh awx_ssh/projects/develop/ssh_key)" # экспорт приватной части  пользователся ssh
     - export git_user="$(vault kv get -field=git_user awx_ssh/projects/develop/git)" # экспорт пользователя git под которым клонируем репозиторий
-    - export git_pass="$(vault kv get -field=git_pass awx_ssh/projects/develop/git)"
+    - export git_pass="$(vault kv get -field=git_pass awx_ssh/projects/develop/git)" # экспорт пароля пользователя git под которым клонируем репозиторий
     - rm -rf /tmp/$infra_dir  # удаляем ранее скопированную директорию helm templates которая содержит helm chart
     #    - echo ${ssh_prv_key} | base64 -di > $(pwd)/pmc.key
     #    - chmod 600 $(pwd)/pmc.key
@@ -143,8 +143,8 @@ tag_job:
 
     - set -e
     - EXIT_CODE=0
-    - git checkout $CI_COMMIT_REF_NAME || EXIT_CODE=$?
-    - if [ $EXIT_CODE != 0 ];then git checkout develop && git checkout -b $CI_COMMIT_REF_NAME  > /dev/null 2>&1;fi
+    - git checkout $CI_COMMIT_REF_NAME || EXIT_CODE=$? # переключаемся на ветку билда и проверяем значение кода
+    - if [ $EXIT_CODE != 0 ];then git checkout develop && git checkout -b $CI_COMMIT_REF_NAME  > /dev/null 2>&1;fi # если cтатус exit code  не равен 0,тогда создаем из develop ветку билда
     - cat ./bamboo-ci.sh
     - chmod +x ./bamboo-ci.sh # запускаем выполнение bash сi cкрипта
     - if [ "$CI_COMMIT_REF_NAME" == "master" ] || [ "$CI_COMMIT_REF_NAME" == "preprod" ]; then sreda="$CI_COMMIT_REF_NAME"; else sreda="develop";fi
