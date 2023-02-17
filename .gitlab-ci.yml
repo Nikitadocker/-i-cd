@@ -279,11 +279,11 @@ deploy_job_preprod:
     - rm -rf /tmp/$infra_dir
     - echo $HOST_DEPLOY
     - echo ${ssh_prv_key} | base64 -di > $(pwd)/awx_pmc.key
-    - chmod 600 $(pwd)/awx_pmc.key
+    - chmod 600 $(pwd)/awx_pmc.key # назначаем права ssh ключу
     - eval $(ssh-agent -s)
-    - ssh-add -t180 $(pwd)/awx_pmc.key
+    - ssh-add -t180 $(pwd)/awx_pmc.key # cообщаем ssh агенту информацию о ключах
     - rm -f $(pwd)/awx_pmc.key
-    - ssh -o "StrictHostKeyChecking no" -A awx@$HOST_DEPLOY << ENDSSH
+    - ssh -o "StrictHostKeyChecking no" -A awx@$HOST_DEPLOY << ENDSSH # подключаемся по ssh к нужному master k8s
     - env
     - cd /home/awx/
     - rm -rf $infra_dir/
@@ -292,7 +292,7 @@ deploy_job_preprod:
     #      StrictHostKeyChecking no \n
     #      Port 2222 \n
     #      User awx' > /tmp/config.cnf
-    - git clone https://$git_user:$git_pass@$gitlab_host/$gitlab_group/$infra_project.git
+    - git clone https://$git_user:$git_pass@$gitlab_host/$gitlab_group/$infra_project.git # клонируем проект с helm chart
     - cd $infra_dir/
     - git fetch && git fetch --tags
     - echo ${CI_COMMIT_REF_NAME}-${CI_PIPELINE_IID}
